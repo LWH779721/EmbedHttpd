@@ -6,7 +6,6 @@
 
 #define HTTP_PORT 8888
 #define MAX_CONNECT 20
-#define TEST
 
 long start_up(int *httpd)
 {
