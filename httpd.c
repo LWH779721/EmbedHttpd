@@ -3,6 +3,8 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <pthread.h>
+#include <ctype.h>
+#include <stdlib.h>
 
 #define HTTP_PORT 8888
 #define MAX_CONNECT 20
@@ -31,12 +33,12 @@ long start_up(int *httpd)
     getsockopt(*httpd, SOL_SOCKET, SO_RCVBUF, (char*)&optVal, &optLen);  
     printf("sockClient1, recv buf is %d\n", optVal); // 8192 
     
-    struct timeval timeout;
+    /*struct timeval timeout;
     timeout.tv_sec = 0;
     timeout.tv_usec = 300*1000;
 
     //接受时限
-    setsockopt(*httpd, SOL_SOCKET, SO_RCVTIMEO, (char*)&timeout,sizeof(timeout));
+    setsockopt(*httpd, SOL_SOCKET, SO_RCVTIMEO, (char*)&timeout,sizeof(timeout));*/
     
 	server.sin_family = AF_INET;
 	server.sin_port = htons(HTTP_PORT);
@@ -133,7 +135,14 @@ void *client_thread(void *args)
             printf("len : %d\n",len);
             for (i = 0; i < len; i++)
             {
-                printf("%c",buffer[i]);
+                if (isprint(buffer[i]))
+                {    
+                    printf("%c",buffer[i]);
+                } 
+                else
+                {
+                    printf("\n%d",buffer[i]);        
+                }   
             }    
             fflush(stdout);  
             
@@ -153,12 +162,21 @@ void *client_thread(void *args)
 	close(client);
 }
 
+void httpd_destory(int status, void *arg)
+{
+    int httpd = *(int *)arg;
+    
+    close(httpd);    
+}
+
 int main(int argc,char ** args)
 {
-	int httpd,client;
+    int httpd,client;
 	struct sockaddr_in client_addr;
 	socklen_t len = sizeof(client_addr);
 	pthread_t client_id;
+    
+    on_exit(httpd_destory, (void *)&httpd);
 
 	if (start_up(&httpd))
 	{
