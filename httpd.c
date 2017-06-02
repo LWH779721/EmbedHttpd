@@ -135,9 +135,9 @@ long execute_cgi(char *url, int client)
         recv(client, &c, 1, 0);
         printf("%c",c);
         //write(cgi_input[1], &c, 1);
-    }*/
+    }
     
-    /*i = recv(client, buf, 100, 0);
+    i = recv(client, buf, 100, 0);
     if (i > 0)
         printf("%s",buf);*/
         
@@ -239,7 +239,7 @@ long do_request(struct request *req, int client)
 void *client_thread(void *args)
 {
 	char buffer[1024] = {0};
-	int len;//, i;
+	int len;
 	int client = *(int *)args;
     
     pthread_detach(pthread_self());
@@ -247,17 +247,9 @@ void *client_thread(void *args)
     {
         len = recv(client, buffer, sizeof(buffer),0);
         if (len > 0)
-        {
-            /*for (i = 0; i < len; ++i)
-            {
-                printf("%c",buffer[i]);
-            }*/
-            //request_parse(buffer, len);
-            //printf("len : %d\n",len);
-            
-            struct request * req = request_parse(buffer, len);
-            do_request(req, client);
-            
+        {   
+            //struct request * req = request_parse(buffer, len);
+            do_request(request_parse(buffer, len), client);         
             //break;
         }
         else if (len == 0)
