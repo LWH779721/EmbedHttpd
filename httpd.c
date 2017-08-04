@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <sys/sendfile.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <pthread.h>
@@ -9,8 +10,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <fcntl.h>  
 #include "httpd.h"
-#include "util/print_util.h"
+#include "mlanguage.h"
+#include "mlog.h"
 
 #define HTTP_PORT 80
 #define MAX_CONNECT 20
@@ -32,14 +35,11 @@ long start_up(int *httpd)
     // 获取sockClient1对应的内核接收缓冲区大小  
     int optVal = 0;  
     int optLen = sizeof(optVal);  
-    /*getsockopt(*httpd, SOL_SOCKET, SO_RCVBUF, (char*)&optVal, &optLen);  
-    printf("sockClient1, recv buf is %d\n", optVal); // 8192 */
+    getsockopt(*httpd, SOL_SOCKET, SO_RCVBUF, (char*)&optVal, &optLen);  
+    printf("sockClient1, recv buf is %d\n", optVal); // 8192 
     
     //optVal = 0;  
     //setsockopt(*httpd, SOL_SOCKET, SO_RCVBUF, (char*)&optVal, optLen); 
-    
-    getsockopt(*httpd, SOL_SOCKET, SO_RCVBUF, (char*)&optVal, &optLen);  
-    printf("sockClient1, recv buf is %d\n", optVal); // 8192 */
     
     optVal = 1;
     ret = setsockopt( *httpd, SOL_SOCKET, SO_REUSEADDR, (char*)&optVal, sizeof(optVal) );
@@ -155,10 +155,12 @@ long send_file(char *url, int client)
         send(client, "HTTP/1.1 404 OK\r\n", strlen("HTTP/1.1 404 OK\r\n"), 0); 
         return 0;   
     }
-       
-    if (NULL == (fp = fopen(url,"rb")))
+    
+    int filefd = open(url, O_RDONLY);
+    
+    if (NULL == (fp = fdopen(filefd,"rb")))
     {
-        print_log("err fail when open file", NULL);
+        mlog("err fail when open file", NULL);
         return -1;
     }
     
@@ -192,11 +194,27 @@ long send_file(char *url, int client)
     
     sprintf(buffer, "Content-length: %d\r\n\r\n", len);
     send(client, buffer, strlen(buffer), 0);
+#if 0    
     while ((len = fread(buffer, 1, 1024, fp)) > 0)
     {
         send(client, buffer, len, 0); 
     }
-    
+#else
+    int ret, left = len;
+    mlog("file fd : %d\n", filefd);
+    while (left)
+    {
+        ret = sendfile(client, filefd, NULL, len);
+        if (ret == 0)
+        {
+            mlog("err : %s ---------", strerror(errno));        
+        }
+        mlog("err : %s ---------", strerror(errno));       
+        left -= ret;
+    }
+        
+    mlog("ret : %d, len : %d-----------", ret, len);
+#endif    
     fclose(fp);
     return 0;      
 }
@@ -254,12 +272,13 @@ void *client_thread(void *args)
         }
         else if (len == 0)
         {
-            print_log("client socket close");
+            mlog("client socket close");
             break;
         } 
         else
         {
-            print_log("errno : %s",strerror(errno));
+            mlog("errno : %s",strerror(errno));
+            break;
         }
     }
 	
@@ -301,7 +320,7 @@ int main(int argc,char ** args)
 		}
 		else
 		{ 
-		    print_log("accept client socket : %d",client); 
+		    mlog("accept client socket : %d",client); 
 		    //printf("",client_addr.);   
 		}
 		
