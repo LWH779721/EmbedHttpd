@@ -1,5 +1,5 @@
 # http
 a http sample code 
 
-features:
+# features:
 1: transmission file by sendfile API (not yet)
