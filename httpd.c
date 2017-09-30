@@ -5,20 +5,39 @@
 #include <sys/sendfile.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <pthread.h>
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>  
+#include <sys/epoll.h>
+#include <signal.h>
 #include "httpd.h"
 #include "mlanguage.h"
 #include "mlog.h"
 
 #define HTTP_PORT 80
 #define MAX_CONNECT 20
+#define SERVER_STRING "Server: jdbhttpd/0.1.0\r\n"
 
 extern int errno;
+
+void setnoblock(int fd)
+{
+    int opts;
+    
+    opts = fcntl(fd, F_GETFL);
+    if (opts < 0) {
+        perror("fcntl(F_GETFL)\n");
+        exit(1);
+    }
+    
+    opts = (opts | O_NONBLOCK);
+    if (fcntl(fd, F_SETFL, opts) < 0) {
+        perror("fcntl(F_SETFL)\n");
+        exit(1);
+    }        
+}
 
 long start_up(int *httpd)
 {
@@ -51,6 +70,8 @@ long start_up(int *httpd)
     //接受时限
     setsockopt(*httpd, SOL_SOCKET, SO_RCVTIMEO, (char*)&timeout,sizeof(timeout));
     
+    setnoblock(*httpd);
+    
     bzero(&server,sizeof server);
 	server.sin_family = AF_INET;
 	server.sin_port = htons(HTTP_PORT);
@@ -81,7 +102,6 @@ struct request *request_parse(char *buffer, long len)
 {
     struct request *req;
     char *p = buffer;
-    //int len;
     int i;
     
     if (NULL == (req = malloc(sizeof *req)))
@@ -98,7 +118,7 @@ struct request *request_parse(char *buffer, long len)
         goto fail;
     }
     req->methon[i] = 0;
-    //printf("%s \n",req->methon);
+    printf("methon : %s \n",req->methon);
     
     p += i;
     p ++;
@@ -110,17 +130,42 @@ struct request *request_parse(char *buffer, long len)
         goto fail;
     }
     req->url[i] = 0;
-    //printf("%s \n",req->url);
-    
+    printf("url : %s \n",req->url);
+#if 0    
     for (i = 0; i < len; ++i)
     {
         printf("%c",buffer[i]);
     }
     fflush(stdout);        
+#endif    
     return req;
 fail:
     free(req);
     return NULL;
+}
+
+void not_found(int client)
+{
+ char buf[1024];
+
+ sprintf(buf, "HTTP/1.0 404 NOT FOUND\r\n");
+ send(client, buf, strlen(buf), 0);
+ sprintf(buf, SERVER_STRING);
+ send(client, buf, strlen(buf), 0);
+ sprintf(buf, "Content-Type: text/html\r\n");
+ send(client, buf, strlen(buf), 0);
+ sprintf(buf, "\r\n");
+ send(client, buf, strlen(buf), 0);
+ sprintf(buf, "<HTML><TITLE>Not Found</TITLE>\r\n");
+ send(client, buf, strlen(buf), 0);
+ sprintf(buf, "<BODY><P>The server could not fulfill\r\n");
+ send(client, buf, strlen(buf), 0);
+ sprintf(buf, "your request because the resource specified\r\n");
+ send(client, buf, strlen(buf), 0);
+ sprintf(buf, "is unavailable or nonexistent.\r\n");
+ send(client, buf, strlen(buf), 0);
+ sprintf(buf, "</BODY></HTML>\r\n");
+ send(client, buf, strlen(buf), 0);
 }
 
 long execute_cgi(char *url, int client)
@@ -128,18 +173,22 @@ long execute_cgi(char *url, int client)
     char c,buf[100];
     int i;
     
-    //sprintf(buf, "HTTP/1.0 200 OK\r\n");
-    //send(client, buf, strlen(buf), 0);
- 
-    /*for (i = 0; i < 11; i++) {
-        recv(client, &c, 1, 0);
-        printf("%c",c);
-        //write(cgi_input[1], &c, 1);
+    if (access(url, F_OK) != F_OK)
+    {
+        not_found(client);
+        //send(client, "HTTP/1.1 404 OK\r\n", strlen("HTTP/1.1 404 OK\r\n"), 0); 
+        return 0;   
     }
     
-    i = recv(client, buf, 100, 0);
-    if (i > 0)
-        printf("%s",buf);*/
+    sprintf(buf, "HTTP/1.0 200 OK\r\n");
+    send(client, buf, strlen(buf), 0);
+    send(client, "Content-type: text/html\r\n", strlen("Content-type: text/html\r\n"), 0);
+    
+    sprintf(buf, "Content-length: %d\r\n\r\n", 5);
+    send(client, buf, strlen(buf), 0);
+    
+    strcpy(buf, "hello");
+    send(client, buf, strlen(buf), 0);
         
     return 0; 
 }
@@ -190,11 +239,11 @@ long send_file(char *url, int client)
     else if (strcmp(p, ".js") == 0) 
     {
         send(client, "Content-type: application/x-javascript\r\n", strlen("Content-type: application/x-javascript\r\n"), 0);
-    }   
-    
+    }
+
     sprintf(buffer, "Content-length: %d\r\n\r\n", len);
     send(client, buffer, strlen(buffer), 0);
-#if 0    
+#if 1   
     while ((len = fread(buffer, 1, 1024, fp)) > 0)
     {
         send(client, buffer, len, 0); 
@@ -204,17 +253,19 @@ long send_file(char *url, int client)
     mlog("file fd : %d\n", filefd);
     while (left)
     {
-        ret = sendfile(client, filefd, NULL, len);
-        if (ret == 0)
+        ret = sendfile(client, filefd, 0, len);
+        if (ret < 0)
         {
             mlog("err : %s ---------", strerror(errno));        
         }
-        mlog("err : %s ---------", strerror(errno));       
+        //mlog("err : %s ---------", strerror(errno));       
+        mlog("ret : %d", ret);
         left -= ret;
     }
         
     mlog("ret : %d, len : %d-----------", ret, len);
 #endif    
+    
     fclose(fp);
     return 0;      
 }
@@ -252,37 +303,6 @@ long do_request(struct request *req, int client)
         
     free(req);
     return 0;
-} 
-
-void *client_thread(void *args)
-{
-	char buffer[1024] = {0};
-	int len;
-	int client = *(int *)args;
-    
-    pthread_detach(pthread_self());
-	while(1)
-    {
-        len = recv(client, buffer, sizeof(buffer),0);
-        if (len > 0)
-        {   
-            //struct request * req = request_parse(buffer, len);
-            do_request(request_parse(buffer, len), client);         
-            //break;
-        }
-        else if (len == 0)
-        {
-            mlog("client socket close");
-            break;
-        } 
-        else
-        {
-            mlog("errno : %s",strerror(errno));
-            break;
-        }
-    }
-	
-	close(client);
 }
 
 void httpd_destory(int status, void *arg)
@@ -297,8 +317,8 @@ int main(int argc,char ** args)
     int httpd,client;
 	struct sockaddr_in client_addr;
 	socklen_t len = sizeof(client_addr);
-	pthread_t client_id;
     
+    signal(SIGPIPE, SIG_IGN);
     //set_log_file("./log.txt");
     chroot("./web/");
     on_exit(httpd_destory, (void *)&httpd);
@@ -310,27 +330,112 @@ int main(int argc,char ** args)
 	}
 	
 	bzero(&client_addr,sizeof client_addr);
-	while (1)
-	{
-		if (0 > (client = accept(httpd,(struct sockaddr *)&client_addr,&len)))
-		{
-			//printf("accept err\n");
-			//goto fail_label;
-			continue;
-		}
-		else
-		{ 
-		    mlog("accept client socket : %d",client); 
-		    //printf("",client_addr.);   
-		}
-		
-		if (pthread_create(&client_id,NULL,client_thread,&client))
-		{
-			printf("create thread err\n");
-			continue;
-		}
-	}
 	
+	int epfd,nfds, i, fd, n, nread;
+    struct epoll_event ev,events[MAX_CONNECT];
+    char buf[2048];
+       
+    epfd = epoll_create(MAX_CONNECT);
+    if (epfd == -1)
+    {
+        printf("err when epoll create\n");
+        return -1;
+    }
+   
+    ev.data.fd = httpd;
+    ev.events = EPOLLIN|EPOLLET;//监听读状态同时设置ET模式
+    epoll_ctl(epfd, EPOLL_CTL_ADD, httpd, &ev);//注册epoll事件
+    while(1)
+    {
+        nfds = epoll_wait(epfd, events, MAX_CONNECT, -1);
+        if (nfds == -1)
+        {
+            printf("failed when epoll wait\n");
+            return -1;
+        }
+                
+        for (i = 0; i < nfds; i++)
+        {
+            fd = events[i].data.fd;
+            if (fd == httpd)
+            {
+                while ((client = accept(httpd, (struct sockaddr *) &client_addr, (size_t *)&len)) > 0) 
+                {
+                    setnoblock(client);
+                    ev.events = EPOLLIN | EPOLLET;
+                    ev.data.fd = client;
+                    
+                    if (epoll_ctl(epfd, EPOLL_CTL_ADD, client, &ev) == -1)
+                    {
+                        perror("epoll add client err");
+                        continue;
+                    }
+                }
+                
+                if (errno != EAGAIN && errno != ECONNABORTED 
+                                && errno != EPROTO && errno != EINTR) 
+                                    perror("accept");
+                
+                continue;
+            }
+            
+            if (events[i].events & EPOLLIN) 
+            {
+                n = 0;
+                while ((nread = read(fd, buf + n, BUFSIZ-1)) > 0) //ET下可以读就一直读
+                {
+                    n += nread;
+                }
+                
+                if (n == 0)
+                {
+                    mlog("client request over");
+                    close(fd);
+                    continue;
+                }
+                
+                buf[n] = 0;        
+                if (nread == -1 && errno != EAGAIN) 
+                {
+                    perror("read error");
+                }
+                        
+                printf("read fd : %d\n", fd);
+                printf("%s",buf);
+                
+                    #if 0    
+                        ev.data.fd = fd;
+                        ev.events = events[i].events | EPOLLOUT; //MOD OUT 
+                        if (epoll_ctl(epfd, EPOLL_CTL_MOD, fd, &ev) == -1) {
+                                perror("epoll_ctl: mod");
+                        }
+                   #else
+                        do_request(request_parse(buf, len), fd); 
+                   #endif     
+            }
+ #if 0           
+            if (events[i].events & EPOLLOUT) {
+                        printf("write fd : %d\n", fd);
+                        
+                        sprintf(buf, "HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n{\"a\":\"1\",\"b\":\"2\"}", 17);
+                        int nwrite, data_size = strlen(buf);
+                        n = data_size;
+                        while (n > 0) {
+                                nwrite = write(fd, buf + data_size - n, n);//ET下一直将要写数据写完
+                                if (nwrite < n) {
+                                        if (nwrite == -1 && errno != EAGAIN) {
+                                                perror("write error");
+                                        }
+                                        break;
+                                }
+                                n -= nwrite;
+                        }
+                        close(fd);
+            }
+#endif            
+        }
+    }
+    
 fail_label:
 	close(httpd);
 	return 0;
