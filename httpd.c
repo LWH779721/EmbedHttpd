@@ -18,7 +18,8 @@
 
 #define HTTP_PORT 80
 #define MAX_CONNECT 20
-#define SERVER_STRING "Server: jdbhttpd/0.1.0\r\n"
+
+#define SERVER_STRING "Server: httpd/0.1.0\r\n"
 
 extern int errno;
 
@@ -131,13 +132,7 @@ struct request *request_parse(char *buffer, long len)
     }
     req->url[i] = 0;
     printf("url : %s \n",req->url);
-#if 0    
-    for (i = 0; i < len; ++i)
-    {
-        printf("%c",buffer[i]);
-    }
-    fflush(stdout);        
-#endif    
+  
     return req;
 fail:
     free(req);
@@ -146,26 +141,26 @@ fail:
 
 void not_found(int client)
 {
- char buf[1024];
+    char buf[1024];
 
- sprintf(buf, "HTTP/1.0 404 NOT FOUND\r\n");
- send(client, buf, strlen(buf), 0);
- sprintf(buf, SERVER_STRING);
- send(client, buf, strlen(buf), 0);
- sprintf(buf, "Content-Type: text/html\r\n");
- send(client, buf, strlen(buf), 0);
- sprintf(buf, "\r\n");
- send(client, buf, strlen(buf), 0);
- sprintf(buf, "<HTML><TITLE>Not Found</TITLE>\r\n");
- send(client, buf, strlen(buf), 0);
- sprintf(buf, "<BODY><P>The server could not fulfill\r\n");
- send(client, buf, strlen(buf), 0);
- sprintf(buf, "your request because the resource specified\r\n");
- send(client, buf, strlen(buf), 0);
- sprintf(buf, "is unavailable or nonexistent.\r\n");
- send(client, buf, strlen(buf), 0);
- sprintf(buf, "</BODY></HTML>\r\n");
- send(client, buf, strlen(buf), 0);
+    sprintf(buf, "HTTP/1.0 404 NOT FOUND\r\n");
+    send(client, buf, strlen(buf), 0);
+    sprintf(buf, SERVER_STRING);
+    send(client, buf, strlen(buf), 0);
+    sprintf(buf, "Content-Type: text/html\r\n");
+    send(client, buf, strlen(buf), 0);
+    sprintf(buf, "\r\n");
+    send(client, buf, strlen(buf), 0);
+    sprintf(buf, "<HTML><TITLE>Not Found</TITLE>\r\n");
+    send(client, buf, strlen(buf), 0);
+    sprintf(buf, "<BODY><P>The server could not fulfill\r\n");
+    send(client, buf, strlen(buf), 0);
+    sprintf(buf, "your request because the resource specified\r\n");
+    send(client, buf, strlen(buf), 0);
+    sprintf(buf, "is unavailable or nonexistent.\r\n");
+    send(client, buf, strlen(buf), 0);
+    sprintf(buf, "</BODY></HTML>\r\n");
+    send(client, buf, strlen(buf), 0);
 }
 
 long execute_cgi(char *url, int client)
@@ -176,7 +171,6 @@ long execute_cgi(char *url, int client)
     if (access(url, F_OK) != F_OK)
     {
         not_found(client);
-        //send(client, "HTTP/1.1 404 OK\r\n", strlen("HTTP/1.1 404 OK\r\n"), 0); 
         return 0;   
     }
     
@@ -195,9 +189,9 @@ long execute_cgi(char *url, int client)
 
 long send_file(char *url, int client) 
 {
-    FILE *fp;
     char buffer[1024], *p = NULL;
     int len;
+    struct stat filestat;
     
     if (access(url, F_OK) != F_OK)
     {
@@ -206,16 +200,8 @@ long send_file(char *url, int client)
     }
     
     int filefd = open(url, O_RDONLY);
-    
-    if (NULL == (fp = fdopen(filefd,"rb")))
-    {
-        mlog("err fail when open file", NULL);
-        return -1;
-    }
-    
-    fseek(fp, 0, SEEK_END);  
-    len = ftell(fp);
-    rewind(fp);
+    stat(url, &filestat);
+    len = filestat.st_size;
     
     send(client, "HTTP/1.1 200 OK\r\n", strlen("HTTP/1.1 200 OK\r\n"), 0);
     send(client, "Date: Wed May 24 09:43:45 CST 2017\r\n", strlen("Date: Wed May 24 09:43:45 CST 2017\r\n"), 0);
@@ -223,7 +209,7 @@ long send_file(char *url, int client)
     if (NULL == (p = strrchr(url, '.')))
     {
         printf("err fail when get ends\n");
-        fclose(fp);
+        close(filefd);
         return -1;    
     }
         
@@ -243,30 +229,20 @@ long send_file(char *url, int client)
 
     sprintf(buffer, "Content-length: %d\r\n\r\n", len);
     send(client, buffer, strlen(buffer), 0);
-#if 1   
-    while ((len = fread(buffer, 1, 1024, fp)) > 0)
-    {
-        send(client, buffer, len, 0); 
-    }
-#else
+
     int ret, left = len;
-    mlog("file fd : %d\n", filefd);
-    while (left)
+    while (left > 0)
     {
-        ret = sendfile(client, filefd, 0, len);
+        ret = sendfile(client, filefd, NULL, len);
         if (ret < 0)
         {
             mlog("err : %s ---------", strerror(errno));        
         }
-        //mlog("err : %s ---------", strerror(errno));       
-        mlog("ret : %d", ret);
+     
         left -= ret;
     }
-        
-    mlog("ret : %d, len : %d-----------", ret, len);
-#endif    
-    
-    fclose(fp);
+
+    close(filefd);
     return 0;      
 }
 
@@ -317,23 +293,21 @@ int main(int argc,char ** args)
     int httpd,client;
 	struct sockaddr_in client_addr;
 	socklen_t len = sizeof(client_addr);
+	int epfd,nfds, i, fd, n, nread;
+    struct epoll_event ev,events[MAX_CONNECT];
+    char buf[2048];
     
     signal(SIGPIPE, SIG_IGN);
     //set_log_file("./log.txt");
     chroot("./web/");
     on_exit(httpd_destory, (void *)&httpd);
-
+    bzero(&client_addr,sizeof client_addr);
+    	
 	if (start_up(&httpd))
 	{
 		printf("start up server err\n");
 		return -1;
 	}
-	
-	bzero(&client_addr,sizeof client_addr);
-	
-	int epfd,nfds, i, fd, n, nread;
-    struct epoll_event ev,events[MAX_CONNECT];
-    char buf[2048];
        
     epfd = epoll_create(MAX_CONNECT);
     if (epfd == -1)
@@ -365,6 +339,7 @@ int main(int argc,char ** args)
                     ev.events = EPOLLIN | EPOLLET;
                     ev.data.fd = client;
                     
+                    printf("add fd : %d\n", client);
                     if (epoll_ctl(epfd, EPOLL_CTL_ADD, client, &ev) == -1)
                     {
                         perror("epoll add client err");
@@ -389,7 +364,7 @@ int main(int argc,char ** args)
                 
                 if (n == 0)
                 {
-                    mlog("client request over");
+                    mlog("client: %d request over", fd);
                     close(fd);
                     continue;
                 }
