@@ -23,21 +23,23 @@
 
 extern int errno;
 
-void setnoblock(int fd)
+long setnoblock(int fd)
 {
     int opts;
     
     opts = fcntl(fd, F_GETFL);
     if (opts < 0) {
         perror("fcntl(F_GETFL)\n");
-        exit(1);
+        return -1;
     }
     
     opts = (opts | O_NONBLOCK);
     if (fcntl(fd, F_SETFL, opts) < 0) {
         perror("fcntl(F_SETFL)\n");
-        exit(1);
-    }        
+        return -2;
+    }
+    
+    return 0;        
 }
 
 long start_up(int *httpd)
@@ -190,7 +192,7 @@ long execute_cgi(char *url, int client)
 long send_file(char *url, int client) 
 {
     char buffer[1024], *p = NULL;
-    int len;
+    int len, ret;
     struct stat filestat;
     
     if (access(url, F_OK) != F_OK)
@@ -230,8 +232,7 @@ long send_file(char *url, int client)
     sprintf(buffer, "Content-length: %d\r\n\r\n", len);
     send(client, buffer, strlen(buffer), 0);
 
-    int ret, left = len;
-    while (left > 0)
+    while (len > 0)
     {
         ret = sendfile(client, filefd, NULL, len);
         if (ret < 0)
@@ -239,7 +240,7 @@ long send_file(char *url, int client)
             mlog("err : %s ---------", strerror(errno));        
         }
      
-        left -= ret;
+        len -= ret;
     }
 
     close(filefd);
@@ -335,11 +336,15 @@ int main(int argc,char ** args)
             {
                 while ((client = accept(httpd, (struct sockaddr *) &client_addr, (size_t *)&len)) > 0) 
                 {
-                    setnoblock(client);
+                    if (setnoblock(client))
+                    {
+                        mlog("failed when set client nonlock");
+                        continue;
+                    }
+                    
                     ev.events = EPOLLIN | EPOLLET;
                     ev.data.fd = client;
                     
-                    printf("add fd : %d\n", client);
                     if (epoll_ctl(epfd, EPOLL_CTL_ADD, client, &ev) == -1)
                     {
                         perror("epoll add client err");
