@@ -228,6 +228,9 @@ long send_file(char *url, int client)
     {
         send(client, "Content-type: application/x-javascript\r\n", strlen("Content-type: application/x-javascript\r\n"), 0);
     }
+    
+    send(client, "Content-type: text/html\r\n", strlen("Content-type: text/html\r\n"), 0);
+    send(client, "Content-Encoding: gzip\r\n", strlen("Content-Encoding: gzip\r\n"), 0);
 
     sprintf(buffer, "Content-length: %d\r\n\r\n", len);
     send(client, buffer, strlen(buffer), 0);
@@ -269,6 +272,8 @@ long do_request(struct request *req, int client)
         cgi = 1;
     }
     
+    strcat(req->url, ".gz");
+    printf("url: %s\n", req->url);
     if (cgi)
     {
         execute_cgi(req->url, client);    
@@ -287,6 +292,31 @@ void httpd_destory(int status, void *arg)
     int httpd = *(int *)arg;
     
     close(httpd);    
+}
+
+int recv_dump(int fd)
+{
+    FILE *fp;
+    char buf[1024];
+    
+    if (NULL == (fp = fdopen(fd, "r+")))
+    {
+        printf("failed when fdopen\n");
+        goto failed_label;
+    }
+    
+    while (fgets(buf, sizeof(buf), fp) != NULL)
+    {
+        printf("-------------------------");
+        printf("%s", buf);
+    }
+    
+    fclose(fp);
+    return 0;
+    
+failed_label:
+    close(fd);
+    return -1;
 }
 
 int main(int argc,char ** args)
@@ -350,6 +380,8 @@ int main(int argc,char ** args)
                         perror("epoll add client err");
                         continue;
                     }
+                    
+                    printf("accept fd : %d\n", client);
                 }
                 
                 if (errno != EAGAIN && errno != ECONNABORTED 
@@ -361,6 +393,7 @@ int main(int argc,char ** args)
             
             if (events[i].events & EPOLLIN) 
             {
+ #if 0               
                 n = 0;
                 while ((nread = read(fd, buf + n, BUFSIZ-1)) > 0) //ET下可以读就一直读
                 {
@@ -382,6 +415,9 @@ int main(int argc,char ** args)
                         
                 printf("read fd : %d\n", fd);
                 printf("%s",buf);
+#else
+                recv_dump(fd);
+#endif                
                 
                     #if 0    
                         ev.data.fd = fd;
@@ -390,7 +426,7 @@ int main(int argc,char ** args)
                                 perror("epoll_ctl: mod");
                         }
                    #else
-                        do_request(request_parse(buf, len), fd); 
+                       //do_request(request_parse(buf, len), fd); 
                    #endif     
             }
  #if 0           
