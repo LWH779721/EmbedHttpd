@@ -12,6 +12,9 @@
 #include <fcntl.h>  
 #include <sys/epoll.h>
 #include <signal.h>
+#include <stdint.h>
+
+#include "mnet.h"
 #include "httpd.h"
 #include "mlanguage.h"
 #include "mlog.h"
@@ -23,82 +26,9 @@
 
 extern int errno;
 
-long setnoblock(int fd)
+http_conf *load_conf()
 {
-    int opts;
     
-    opts = fcntl(fd, F_GETFL);
-    if (opts < 0) {
-        perror("fcntl(F_GETFL)\n");
-        return -1;
-    }
-    
-    opts = (opts | O_NONBLOCK);
-    if (fcntl(fd, F_SETFL, opts) < 0) {
-        perror("fcntl(F_SETFL)\n");
-        return -2;
-    }
-    
-    return 0;        
-}
-
-long start_up(int *httpd)
-{
-	struct sockaddr_in server;
-	socklen_t len;
-	int ret;
-
-	if (0 > (*httpd = socket(AF_INET,SOCK_STREAM, 0)))
-	{
-		printf("create socker err\n");
-		return -1;
-	} 	
-	
-    // 获取sockClient1对应的内核接收缓冲区大小  
-    int optVal = 0;  
-    int optLen = sizeof(optVal);  
-    getsockopt(*httpd, SOL_SOCKET, SO_RCVBUF, (char*)&optVal, &optLen);  
-    printf("sockClient1, recv buf is %d\n", optVal); // 8192 
-    
-    //optVal = 0;  
-    //setsockopt(*httpd, SOL_SOCKET, SO_RCVBUF, (char*)&optVal, optLen); 
-    
-    optVal = 1;
-    ret = setsockopt( *httpd, SOL_SOCKET, SO_REUSEADDR, (char*)&optVal, sizeof(optVal) );
-    
-    struct timeval timeout;
-    timeout.tv_sec = 1;
-    timeout.tv_usec = 0;//300*1000;
-
-    //接受时限
-    setsockopt(*httpd, SOL_SOCKET, SO_RCVTIMEO, (char*)&timeout,sizeof(timeout));
-    
-    setnoblock(*httpd);
-    
-    bzero(&server,sizeof server);
-	server.sin_family = AF_INET;
-	server.sin_port = htons(HTTP_PORT);
-    server.sin_addr.s_addr = htonl(INADDR_ANY);
-	len = sizeof(server);
-
-	if (-1 == bind(*httpd,(struct sockaddr *)&server,len))
-	{
-		printf("bind err\n");
-		goto fail_label;
-	}
-
-	if (-1 == listen(*httpd,MAX_CONNECT))
-	{
-		printf("listen err\n");
-		goto fail_label;
-	}
- 	
-	ret = 0;
-    return ret;
-fail_label:
-	close(*httpd);
-	ret = -1;
-	return ret;	
 }
 
 struct request *request_parse(char *buffer, long len)
@@ -197,7 +127,7 @@ long send_file(char *url, int client)
     
     if (access(url, F_OK) != F_OK)
     {
-        send(client, "HTTP/1.1 404 OK\r\n", strlen("HTTP/1.1 404 OK\r\n"), 0); 
+        not_found(client); 
         return 0;   
     }
     
@@ -240,7 +170,7 @@ long send_file(char *url, int client)
         ret = sendfile(client, filefd, NULL, len);
         if (ret < 0)
         {
-            mlog("err : %s ---------", strerror(errno));        
+            mlog_err("%s ---------", strerror(errno));        
         }
      
         len -= ret;
@@ -307,8 +237,7 @@ int recv_dump(int fd)
     
     while (fgets(buf, sizeof(buf), fp) != NULL)
     {
-        printf("-------------------------");
-        printf("%s", buf);
+        mlog_err("--%s", buf);
     }
     
     fclose(fp);
@@ -330,11 +259,11 @@ int main(int argc,char ** args)
     
     signal(SIGPIPE, SIG_IGN);
     //set_log_file("./log.txt");
-    chroot("./web/");
+    chroot("web");
     on_exit(httpd_destory, (void *)&httpd);
     bzero(&client_addr,sizeof client_addr);
     	
-	if (start_up(&httpd))
+	if (0 > (httpd = mnet_tcp_server(HTTP_PORT)))
 	{
 		printf("start up server err\n");
 		return -1;
@@ -366,9 +295,9 @@ int main(int argc,char ** args)
             {
                 while ((client = accept(httpd, (struct sockaddr *) &client_addr, (size_t *)&len)) > 0) 
                 {
-                    if (setnoblock(client))
+                    if (mnet_setnoblock(client))
                     {
-                        mlog("failed when set client nonlock");
+                        mlog_err("failed when set client nonlock");
                         continue;
                     }
                     
@@ -381,7 +310,7 @@ int main(int argc,char ** args)
                         continue;
                     }
                     
-                    printf("accept fd : %d\n", client);
+                    mlog_info("accept fd : %d", client);
                 }
                 
                 if (errno != EAGAIN && errno != ECONNABORTED 
@@ -392,8 +321,7 @@ int main(int argc,char ** args)
             }
             
             if (events[i].events & EPOLLIN) 
-            {
- #if 0               
+            {                            
                 n = 0;
                 while ((nread = read(fd, buf + n, BUFSIZ-1)) > 0) //ET下可以读就一直读
                 {
@@ -402,7 +330,7 @@ int main(int argc,char ** args)
                 
                 if (n == 0)
                 {
-                    mlog("client: %d request over", fd);
+                    mlog_err("client: %d request over", fd);
                     close(fd);
                     continue;
                 }
@@ -413,11 +341,9 @@ int main(int argc,char ** args)
                     perror("read error");
                 }
                         
-                printf("read fd : %d\n", fd);
-                printf("%s",buf);
-#else
-                recv_dump(fd);
-#endif                
+                mlog_info("read fd : %d, req: %s", fd, buf);
+
+                //recv_dump(fd);              
                 
                     #if 0    
                         ev.data.fd = fd;
@@ -426,29 +352,9 @@ int main(int argc,char ** args)
                                 perror("epoll_ctl: mod");
                         }
                    #else
-                       //do_request(request_parse(buf, len), fd); 
+                       do_request(request_parse(buf, len), fd); 
                    #endif     
-            }
- #if 0           
-            if (events[i].events & EPOLLOUT) {
-                        printf("write fd : %d\n", fd);
-                        
-                        sprintf(buf, "HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n{\"a\":\"1\",\"b\":\"2\"}", 17);
-                        int nwrite, data_size = strlen(buf);
-                        n = data_size;
-                        while (n > 0) {
-                                nwrite = write(fd, buf + data_size - n, n);//ET下一直将要写数据写完
-                                if (nwrite < n) {
-                                        if (nwrite == -1 && errno != EAGAIN) {
-                                                perror("write error");
-                                        }
-                                        break;
-                                }
-                                n -= nwrite;
-                        }
-                        close(fd);
-            }
-#endif            
+            }          
         }
     }
     

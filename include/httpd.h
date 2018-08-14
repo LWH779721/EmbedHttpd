@@ -17,6 +17,10 @@ struct request
     //enum hv;  
 };
 
+typedef struct {
+    int port;
+} http_conf;
+
 #ifdef __Cplusplus
 }
 #endif

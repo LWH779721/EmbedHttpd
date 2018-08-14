@@ -5,14 +5,51 @@
 extern "C"{
 #endif
 
-#ifndef mlog
-#define mlog(sparam,arg...) \
+#define DEBUG_LEVEL 3
+
+#ifdef DEBUG_LEVEL
+
+#if DEBUG_LEVEL == 1
+
+#define mlog_err(sparam,arg...) \
 do {\
-    printf("[%s %s:%d %s] "sparam"\n", mlog_time(), __FILE__, __LINE__, __FUNCTION__, ##arg);\
+    printf("[%s %s:%d %s] err:"sparam"\n", mlog_time(), __FILE__, __LINE__, __FUNCTION__, ##arg);\
+}while(0);
+#define mlog_warm(sparam,arg...)
+#define mlog_info(sparam,arg...)
+
+#elif DEBUG_LEVEL == 2
+
+#define mlog_err(sparam,arg...) \
+do {\
+    printf("[%s %s:%d %s] err:"sparam"\n", mlog_time(), __FILE__, __LINE__, __FUNCTION__, ##arg);\
+}while(0);
+#define mlog_warm(sparam,arg...)\
+do {\
+    printf("[%s %s:%d %s] warm:"sparam"\n", mlog_time(), __FILE__, __LINE__, __FUNCTION__, ##arg);\
+}while(0);
+
+#define mlog_info(sparam,arg...)
+
+#elif DEBUG_LEVEL == 3
+
+#define mlog_err(sparam,arg...) \
+do {\
+    printf("[%s %s:%d %s] err:"sparam"\n", mlog_time(), __FILE__, __LINE__, __FUNCTION__, ##arg);\
+}while(0);
+#define mlog_warm(sparam,arg...)\
+do {\
+    printf("[%s %s:%d %s] warm:"sparam"\n", mlog_time(), __FILE__, __LINE__, __FUNCTION__, ##arg);\
+}while(0);
+#define mlog_info(sparam,arg...)\
+do {\
+    printf("[%s %s:%d %s] info:"sparam"\n", mlog_time(), __FILE__, __LINE__, __FUNCTION__, ##arg);\
 }while(0);
 #endif
+#endif
 
-extern long mlog_set_ofile(char *file);
+extern long mlog_set_logfile(char *file);
+extern long mnet_tcp_server(int port);
 
 #ifdef __Cplusplus
 }
