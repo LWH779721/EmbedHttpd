@@ -1,7 +1,7 @@
 LINK_FLAG = -I ./include -L ./libs
 
 
-cc = gcc 
+cc = $(CC) 
 
 SRC_PATH = ./src
 OBJECT_PATH = object

@@ -19,7 +19,7 @@
 #include "mlanguage.h"
 #include "mlog.h"
 
-#define HTTP_PORT 80
+#define HTTP_PORT 8080
 #define MAX_CONNECT 20
 
 #define SERVER_STRING "Server: httpd/0.1.0\r\n"
@@ -55,14 +55,17 @@ struct request *request_parse(char *buffer, long len)
     
     p += i;
     p ++;
-    sscanf(p, "%s%n", req->url, &i);
+    
+    snprintf(req->url, "%s", "/home/lwh/workspace/http/web");
+    printf("url : %s \n",req->url);
+    sscanf(p, "%s%n", req->url+28, &i);
     if (i > 200
         || i <= 0) 
     {
         printf("get url err\n");
         goto fail;
     }
-    req->url[i] = 0;
+    req->url[28 + i] = 0;
     printf("url : %s \n",req->url);
   
     return req;
@@ -127,6 +130,7 @@ long send_file(char *url, int client)
     
     if (access(url, F_OK) != F_OK)
     {
+        printf("url not exist: %s\n", url);
         not_found(client); 
         return 0;   
     }
@@ -203,7 +207,7 @@ long do_request(struct request *req, int client)
     }
     
     strcat(req->url, ".gz");
-    printf("url: %s\n", req->url);
+    printf("%d, url: %s\n", __LINE__, req->url);
     if (cgi)
     {
         execute_cgi(req->url, client);    
@@ -246,119 +250,4 @@ int recv_dump(int fd)
 failed_label:
     close(fd);
     return -1;
-}
-
-int main(int argc,char ** args)
-{
-    int httpd,client;
-	struct sockaddr_in client_addr;
-	socklen_t len = sizeof(client_addr);
-	int epfd,nfds, i, fd, n, nread;
-    struct epoll_event ev,events[MAX_CONNECT];
-    char buf[2048];
-    
-    signal(SIGPIPE, SIG_IGN);
-    //set_log_file("./log.txt");
-    chroot("web");
-    on_exit(httpd_destory, (void *)&httpd);
-    bzero(&client_addr,sizeof client_addr);
-    	
-	if (0 > (httpd = mnet_tcp_server(HTTP_PORT)))
-	{
-		printf("start up server err\n");
-		return -1;
-	}
-       
-    epfd = epoll_create(MAX_CONNECT);
-    if (epfd == -1)
-    {
-        printf("err when epoll create\n");
-        return -1;
-    }
-   
-    ev.data.fd = httpd;
-    ev.events = EPOLLIN|EPOLLET;//监听读状态同时设置ET模式
-    epoll_ctl(epfd, EPOLL_CTL_ADD, httpd, &ev);//注册epoll事件
-    while(1)
-    {
-        nfds = epoll_wait(epfd, events, MAX_CONNECT, -1);
-        if (nfds == -1)
-        {
-            printf("failed when epoll wait\n");
-            return -1;
-        }
-                
-        for (i = 0; i < nfds; i++)
-        {
-            fd = events[i].data.fd;
-            if (fd == httpd)
-            {
-                while ((client = accept(httpd, (struct sockaddr *) &client_addr, (size_t *)&len)) > 0) 
-                {
-                    if (mnet_setnoblock(client))
-                    {
-                        mlog_err("failed when set client nonlock");
-                        continue;
-                    }
-                    
-                    ev.events = EPOLLIN | EPOLLET;
-                    ev.data.fd = client;
-                    
-                    if (epoll_ctl(epfd, EPOLL_CTL_ADD, client, &ev) == -1)
-                    {
-                        perror("epoll add client err");
-                        continue;
-                    }
-                    
-                    mlog_info("accept fd : %d", client);
-                }
-                
-                if (errno != EAGAIN && errno != ECONNABORTED 
-                                && errno != EPROTO && errno != EINTR) 
-                                    perror("accept");
-                
-                continue;
-            }
-            
-            if (events[i].events & EPOLLIN) 
-            {                            
-                n = 0;
-                while ((nread = read(fd, buf + n, BUFSIZ-1)) > 0) //ET下可以读就一直读
-                {
-                    n += nread;
-                }
-                
-                if (n == 0)
-                {
-                    mlog_err("client: %d request over", fd);
-                    close(fd);
-                    continue;
-                }
-                
-                buf[n] = 0;        
-                if (nread == -1 && errno != EAGAIN) 
-                {
-                    perror("read error");
-                }
-                        
-                mlog_info("read fd : %d, req: %s", fd, buf);
-
-                //recv_dump(fd);              
-                
-                    #if 0    
-                        ev.data.fd = fd;
-                        ev.events = events[i].events | EPOLLOUT; //MOD OUT 
-                        if (epoll_ctl(epfd, EPOLL_CTL_MOD, fd, &ev) == -1) {
-                                perror("epoll_ctl: mod");
-                        }
-                   #else
-                       do_request(request_parse(buf, len), fd); 
-                   #endif     
-            }          
-        }
-    }
-    
-fail_label:
-	close(httpd);
-	return 0;
 }

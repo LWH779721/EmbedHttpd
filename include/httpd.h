@@ -1,7 +1,7 @@
 #ifndef __HTTPD_H__
 #define __HTTPD_H__
 
-#ifdef __Cplusplus
+#ifdef __cplusplus
 extern .C{
 #endif
 
@@ -21,8 +21,9 @@ typedef struct {
     int port;
 } http_conf;
 
-#ifdef __Cplusplus
+extern void httpd_destory(int status, void *arg);
+
+#ifdef __cplusplus
 }
 #endif
-
 #endif
